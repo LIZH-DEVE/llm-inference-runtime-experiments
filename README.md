@@ -2,7 +2,7 @@
 
 围绕 **vLLM 与单机 GPU 推理运行时**，记录本地环境、模型执行路径、scheduler / KV cache 源码分析、request-level tracing，以及若干受控性能实验。
 
-仓库当前重点是把性能数字和具体 runtime state 对齐，而不是只做模型调用或参数测试。
+内容围绕性能测量与具体 runtime state 的对应关系展开。
 
 ## 实验平台
 
@@ -146,7 +146,7 @@ python experiments/streaming_benchmark.py \
 python scripts/analyze_benchmark.py results/benchmark.jsonl
 ```
 
-Benchmark 显式区分 warmup 与 measured requests，并固定 generation parameters 和 client concurrency。
+Benchmark 显式区分 warmup 与 measured requests，并固定 generation parameters 和 client concurrency。完整运行方式见 [experiments/README.md](experiments/README.md)。
 
 ## Measurement Case Studies
 

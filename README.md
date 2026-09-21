@@ -1,14 +1,21 @@
-# LLM Inference Runtime Foundations
+# RTX 5060 Blackwell 本地 LLM 推理环境搭建与验证
 
-面向 **LLM inference / serving systems** 的基础实践仓库，记录本地 GPU 环境配置、vLLM 运行验证、推理 runtime 基础概念、benchmark 方法和常见排障过程。
+本仓库记录在 **RTX 5060 Laptop 8GB（Blackwell, sm_120）** 上搭建本地 LLM 推理环境的完整过程，以及 PyTorch / CUDA / vLLM / 模型加载链路的实际验证结果。
 
-内容围绕可复现的本地推理环境、vLLM 基础运行链路、常用 serving 指标与 benchmark 方法展开。
+重点不是整理通用的 LLM 理论，而是保留一套可以复查的本地推理环境：
+
+```text
+WSL2 Ubuntu
+  → CUDA Toolkit
+  → PyTorch CUDA
+  → vLLM
+  → local model load
+  → inference smoke test
+```
 
 ## 当前环境
 
-当前已验证的本地环境：
-
-| 组件 | 配置 |
+| 组件 | 当前配置 |
 | --- | --- |
 | GPU | NVIDIA RTX 5060 Laptop，8 GB |
 | GPU 架构 | Blackwell，sm_120 |
@@ -17,108 +24,78 @@
 | PyTorch | 2.11.0 + cu130 |
 | CUDA Toolkit | 13.0.3 |
 | vLLM | 0.26.0 |
-| 本地模型 | Qwen3-1.7B，BF16 |
 
-这套环境主要用于源码阅读、小规模 inference profiling、runtime 行为复现和实验方法训练。
+这套环境已经用于本地 LLM / VLM 推理、vLLM runtime 实验和 GPU compatibility 验证。
 
-## 仓库内容
+## 本地模型
 
-```text
-.
-├── README.md
-├── docs/
-│   ├── environment-setup.md
-│   ├── vllm-runtime-basics.md
-│   ├── benchmark-methodology.md
-│   └── troubleshooting/
-│       └── wsl-cuda-vllm-checklist.md
-├── examples/
-│   └── vllm-smoke-test.py
-└── scripts/
-    ├── collect_environment.py
-    └── summarize_latency.py
-```
+目前本机实际使用或验证过的模型包括：
 
-## Quick Start
+| 模型 | 本地用途 / 状态 |
+| --- | --- |
+| **Qwen/Qwen3-1.7B** | 当前主要 dense 模型；BF16 下用于 vLLM inference、runtime 与 state 实验 |
+| **Qwen/Qwen3-VL-2B-Instruct** | 用于 VLM / visual encoder、multimodal runtime 与 CUDA Graph 相关实验 |
+| **Qwen3.5-0.8B** | 用于早期 hybrid-model runtime / gate 实验 |
+| **Qwen3.5-2B** | 用于本地 Qwen3.5 inference 与相关 runtime 实验 |
+| **Qwen2.5-1.5B-Instruct** | 早期本地 vLLM 推理实验使用 |
+| **Qwen2.5-3B** | 做过本地校准尝试；部分配置受 8 GB VRAM 限制出现 OOM |
 
-### 1. 检查环境
+详细记录见 [本地模型与用途](docs/local-models.md)。
+
+## 环境验证
+
+### 1. 检查 GPU / PyTorch / CUDA / vLLM
 
 ```bash
 python scripts/collect_environment.py
 ```
 
-脚本会输出 Python、PyTorch、CUDA、GPU 与 vLLM 的基础版本信息。
+脚本会输出：
 
-### 2. 运行最小 vLLM smoke test
+- Python 版本；
+- PyTorch 版本；
+- PyTorch CUDA runtime；
+- CUDA availability；
+- GPU 型号；
+- compute capability；
+- VRAM；
+- vLLM 版本。
+
+### 2. 运行最小 vLLM 推理
 
 ```bash
 python examples/vllm-smoke-test.py \
   --model Qwen/Qwen3-1.7B
 ```
 
-该脚本只验证最小离线推理链路：
+验证链路：
 
 ```text
 model load
-  -> request
-  -> prefill
-  -> decode
-  -> output
+  → request
+  → prefill
+  → decode
+  → output
 ```
 
-### 3. 汇总 latency JSONL
+## 仓库结构
 
-```bash
-python scripts/summarize_latency.py run.jsonl --field ttft_ms
+```text
+.
+├── README.md
+├── docs/
+│   ├── environment-setup.md
+│   ├── local-models.md
+│   └── troubleshooting/
+│       └── wsl-cuda-vllm-checklist.md
+├── examples/
+│   └── vllm-smoke-test.py
+└── scripts/
+    └── collect_environment.py
 ```
 
-输出 count、mean、median、p95、p99、min 和 max。
-
-## 学习重点
-
-### Runtime
-
-重点理解：
-
-- request lifecycle；
-- scheduler；
-- prefill / decode；
-- KV cache；
-- continuous batching；
-- CUDA Graph；
-- execution mode；
-- CPU / GPU synchronization。
-
-### Serving Metrics
-
-常用指标：
-
-- **TTFT**：Time To First Token，请求到首 token 返回的时间；
-- **TPOT**：Time Per Output Token，首 token 之后平均生成一个 token 的时间；
-- **Latency**：单请求端到端延迟；
-- **Throughput**：单位时间内完成的请求或生成的 token 数；
-- **Tail Latency**：例如 p95 / p99 latency，用于观察慢请求。
-
-### Benchmark
-
-基础测量原则：
-
-- 区分 cold start 与 steady state；
-- 正式测量前进行 warmup；
-- 使用重复实验而不是单次结果；
-- 固定模型、dtype、context length 与 runtime flags；
-- 同时记录环境、workload 和版本信息；
-- 在解释小幅性能差异前先检查方差与 measurement noise。
-
-详细内容见 [Benchmark Methodology](docs/benchmark-methodology.md)。
-
-## 文档入口
+## 文档
 
 - [环境搭建与验证](docs/environment-setup.md)
-- [vLLM Runtime 基础](docs/vllm-runtime-basics.md)
-- [Benchmark 方法](docs/benchmark-methodology.md)
+- [本地模型与用途](docs/local-models.md)
 - [WSL / CUDA / vLLM 排障清单](docs/troubleshooting/wsl-cuda-vllm-checklist.md)
-
-## 定位
-
-本仓库记录 **LLM inference runtime 基础工程实践**，重点是环境、运行链路、测量方法和基础工具。

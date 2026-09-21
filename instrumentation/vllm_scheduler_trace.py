@@ -9,6 +9,7 @@ Install the wrapper before constructing the LLM engine.
 from __future__ import annotations
 
 from collections.abc import Callable
+import os
 from typing import Any
 
 from instrumentation.request_correlated_trace import JsonlRuntimeTrace
@@ -17,6 +18,12 @@ from instrumentation.request_correlated_trace import JsonlRuntimeTrace
 def install_scheduler_trace(
     trace: JsonlRuntimeTrace,
 ) -> Callable[..., Any]:
+    if os.environ.get("VLLM_ENABLE_V1_MULTIPROCESSING", "1") != "0":
+        raise RuntimeError(
+            "This monkey-patch tracer requires the V1 scheduler to run in-process. "
+            "Set VLLM_ENABLE_V1_MULTIPROCESSING=0 before importing/constructing vLLM."
+        )
+
     from vllm.v1.core.sched.scheduler import Scheduler
 
     if getattr(Scheduler, "_runtime_trace_installed", False):

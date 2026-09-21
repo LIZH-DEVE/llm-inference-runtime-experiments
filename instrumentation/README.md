@@ -4,6 +4,8 @@
 
 当前 adapter 针对 vLLM 0.26.x 的 `Scheduler.schedule()` API，记录 scheduler step 与 request-level scheduling decision，不序列化完整 `Request` 对象。
 
+vLLM 0.26.x 默认启用 V1 EngineCore multiprocessing。当前实现采用 Python monkey-patch，因此 tracing 时显式设置 `VLLM_ENABLE_V1_MULTIPROCESSING=0`，让 scheduler 与 tracer 位于同一进程；普通 benchmark 不要求修改这一配置。
+
 ## 记录内容
 
 ### Scheduler Step
@@ -47,9 +49,12 @@ request_scheduled
 
 ## 使用方式
 
-必须在创建 vLLM engine **之前**安装 wrapper：
+必须在导入 / 创建 vLLM engine **之前**切换到 in-process EngineCore，并安装 wrapper：
 
 ```python
+import os
+os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
+
 from instrumentation.request_correlated_trace import JsonlRuntimeTrace
 from instrumentation.vllm_scheduler_trace import install_scheduler_trace
 

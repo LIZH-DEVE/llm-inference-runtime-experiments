@@ -1,108 +1,148 @@
-# Runtime 源码阅读记录
+# vLLM Runtime Source Map
 
-本文件记录 LLM inference runtime 源码阅读时关注的主要对象和问题。
+当前源码阅读以 **vLLM 0.26.0 V1 runtime** 为主。重点不是整理概念，而是跟踪 request state、scheduler decision、KV allocation 与 model execution 之间的实际代码路径。
 
-## 1. Request Lifecycle
+## Scheduler
 
-阅读 request path 时重点追踪：
+### `vllm/v1/core/sched/scheduler.py`
 
-```text
-request created
-  → admitted / queued
-  → scheduled
-  → model execution
-  → output produced
-  → request finished / cancelled / preempted
-```
-
-需要区分 logical request state 与 GPU 上实际资源状态。
-
-## 2. Scheduler
-
-重点关注：
-
-- waiting request；
-- running request；
-- token budget；
-- prefill / decode request 的共同调度；
-- preemption；
-- max-num-seqs / max-num-batched-tokens 等资源约束；
-- scheduler decision 如何映射到真正的 GPU execution。
-
-仅观察最终 latency 不足以解释 scheduler mechanism，因此需要 request-correlated trace。
-
-## 3. KV Cache / Persistent State
-
-Dense Transformer 中主要关注：
-
-- block allocation；
-- block table；
-- reuse；
-- prefix caching；
-- request completion 后的 free / reclaim；
-- preemption / recompute。
-
-对于 hybrid model，还需要继续考虑：
-
-- recurrent state；
-- conv state；
-- 不同 state 的 lifetime / ownership；
-- attention KV 与 recurrent state 是否共享相同调度假设。
-
-## 4. Prefill / Decode
-
-Prefill 和 decode 的资源特性不同：
-
-- prefill 通常一次处理更多 token；
-- decode 每 step 新增少量 token，但持续时间长；
-- 两者混合时可能产生 latency / throughput trade-off。
-
-因此实验中需要明确 workload composition，而不是只给一个 batch size。
-
-## 5. CUDA Graph / Eager Execution
-
-CUDA Graph 可以降低重复 launch overhead，但同时会引入：
-
-- graph capture；
-- graph specialization；
-- shape constraints；
-- cold-start cost；
-- eager fallback。
-
-性能实验必须记录 execution mode，否则 scheduler 参数变化可能和 CUDA Graph 行为混在一起。
-
-## 6. Multimodal Runtime
-
-VLM 不只是“LLM 多一个图像输入”。
-
-需要继续追踪：
+核心类：
 
 ```text
-image / video input
-  → preprocessing
-  → visual encoder
-  → embedding / token preparation
-  → language-model execution
+Scheduler
 ```
 
-不同阶段可能有不同：
+重点入口：
 
-- memory demand；
-- graphability；
-- execution backend；
-- CPU / GPU synchronization；
-- batching behavior。
+```text
+Scheduler.schedule()
+```
 
-## 7. Source Observation → Experiment
+该函数维护并使用：
 
-源码中的 TODO、特殊 branch 或 fallback 只代表实验线索。
+- `self.running`
+- `self.waiting`
+- `self.max_num_scheduled_tokens`
+- `token_budget`
+- `num_scheduled_tokens`
+- `preempted_reqs`
 
-后续至少继续问：
+典型路径：
 
-1. 能否稳定触发？
-2. magnitude 是否足够大？
-3. 是否能排除简单 explanation？
-4. mechanism 是否有 trace 支持？
-5. 现有实现是否已经有简单 workaround？
+```text
+RUNNING requests
+  → compute num_new_tokens
+  → KVCacheManager.allocate_slots()
+  → possible preemption
+  → update num_scheduled_tokens
+  → consume token_budget
 
-这一步用于把源码阅读从“找到奇怪代码”转化为可验证的 systems question。
+WAITING requests
+  → cache lookup / resource checks
+  → allocate slots
+  → move into running
+```
+
+vLLM V1 scheduler 不把执行简单划分成独立的“prefill scheduler”和“decode scheduler”。调度基于 request 当前的 `num_computed_tokens` 与待计算 token 数统一进行。
+
+## Scheduler Output
+
+### `vllm/v1/core/sched/output.py`
+
+`SchedulerOutput` 是 scheduler 与后续 model execution 之间的重要边界。
+
+当前 tracing 主要使用：
+
+- `num_scheduled_tokens: dict[str, int]`
+- `total_num_scheduled_tokens`
+- `scheduled_new_reqs`
+- `scheduled_cached_reqs`
+- `preempted_req_ids`
+- `finished_req_ids`
+
+这些字段可以把 request-level latency 与具体 scheduler step 对齐。
+
+## Request State
+
+### `vllm/v1/request.py`
+
+分析 request lifecycle 时重点关注：
+
+- request id；
+- prompt / output token state；
+- `num_computed_tokens`；
+- output placeholders；
+- request status；
+- preemption count；
+- encoder / multimodal inputs。
+
+对于 runtime 分析，重要的是区分：
+
+```text
+logical request state
+vs.
+tokens actually scheduled in this step
+vs.
+GPU-side cache / execution state
+```
+
+## KV Cache
+
+### `vllm/v1/core/kv_cache_manager.py`
+
+scheduler 通过 KV cache manager 完成 block 查找和 slot allocation。
+
+重点路径包括：
+
+- prefix-cache lookup；
+- `allocate_slots()`；
+- block free / reuse；
+- preemption 后的 state handling。
+
+在 hybrid model 中，还需要继续跟踪 Mamba / recurrent state 与 attention KV state 的不同生命周期。
+
+## Scheduler Configuration
+
+### `vllm/config/scheduler.py`
+
+实验中经常涉及的配置包括：
+
+- `max_num_seqs`
+- `max_num_batched_tokens`
+- scheduling policy
+- async scheduling
+- chunked prefill 相关参数
+
+这些参数影响 scheduler 可达的 batch state，因此 benchmark 必须与 runtime flags 一起记录。
+
+## Multimodal Path
+
+VLM request 还需要继续追踪：
+
+```text
+input preprocessing
+  → multimodal feature / encoder budget
+  → encoder cache
+  → language-model scheduling
+```
+
+相关路径分布在 `vllm/multimodal/`、encoder cache manager 和 scheduler 中。
+
+## 从源码观察到实验
+
+源码中的特殊 branch、fallback 或 TODO 只作为实验入口。
+
+后续分析按以下顺序推进：
+
+```text
+source path
+  → trigger condition
+  → runtime event
+  → controlled workload
+  → request-level measurement
+```
+
+公开的 scheduler tracing adapter 位于：
+
+- [`instrumentation/vllm_scheduler_trace.py`](../instrumentation/vllm_scheduler_trace.py)
+- [`instrumentation/request_correlated_trace.py`](../instrumentation/request_correlated_trace.py)

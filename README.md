@@ -150,18 +150,16 @@ Benchmark 显式区分 warmup 与 measured requests，并固定 generation param
 
 ## Measurement Case Studies
 
-早期 runtime 实验中记录过几类典型测量问题：
+较早的本地 runtime 实验记录了几类典型测量问题：
 
-| Case | 初始现象 | 控制后结果 |
+| Case | 主要问题 | 控制后的判断 |
 | --- | --- | --- |
-| **CUDA Graph / cold start** | 表面差异约 233.7% | steady-state 约 9.9% |
-| **Chunk-size × execution mode** | 配置间差异约 30.9% | eager control 后约 2.3% |
-| **Async scheduling** | 出现 HOL blocking 信号 | 加强复现后未稳定成立 |
-| **Tracing overhead** | heavy trace 改变目标信号 | 改用轻量 request-level trace |
+| **CUDA Graph / cold start** | 初始化、JIT 与 graph capture 混入首轮测量 | steady-state 差异显著收缩 |
+| **Chunk-size × execution mode** | scheduler 参数与 execution mode 同时变化 | 固定 eager 路径后差异接近实验噪声 |
+| **Async scheduling** | 早期出现 HOL blocking 信号 | 加强复现后未稳定成立 |
+| **Tracing overhead** | heavy trace 改变目标 latency signal | 改为轻量 request-level trace |
 
-历史案例主要来自 RTX 5060 + Qwen2.5-3B 的早期本地 vLLM 测量阶段；当前主环境已升级到 vLLM 0.26.0。
-
-详见 [Runtime Measurement Case Studies](docs/case-studies/README.md)。
+这些案例用于说明实验控制和归因过程，不作为当前 vLLM 0.26.0 的性能基线。历史汇总值及实验边界见 [Runtime Measurement Case Studies](docs/case-studies/README.md)。
 
 ## 实验方法
 
@@ -186,6 +184,24 @@ workload
 
 详见 [Experiment Methodology](docs/research-methodology.md)。
 
+## Reproducibility
+
+公开仓库只包含不涉及未公开研究候选的 runtime 工具与实验方法。历史 case study 的原始日志未放入公开仓库，因此 README 不把这些旧结果作为当前性能结论。
+
+代码层提供 CPU-only tests，用于检查：
+
+- JSONL trace schema 与写入；
+- percentile / metric summary；
+- benchmark prompt construction。
+
+运行：
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+GPU / vLLM 路径需要按 [环境配置](docs/environment-setup.md) 单独运行。
+
 ## 仓库结构
 
 ```text
@@ -206,8 +222,9 @@ workload
 ├── examples/
 │   ├── vllm-smoke-test.py
 │   └── traced_vllm_smoke_test.py
-└── scripts/
-    ├── collect_environment.py
-    ├── analyze_trace.py
-    └── analyze_benchmark.py
+├── scripts/
+│   ├── collect_environment.py
+│   ├── analyze_trace.py
+│   └── analyze_benchmark.py
+└── tests/
 ```

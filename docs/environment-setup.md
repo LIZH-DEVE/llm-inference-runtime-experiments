@@ -103,7 +103,7 @@ PY
 随后运行：
 
 ```bash
-python ../examples/vllm-smoke-test.py --model Qwen/Qwen3-1.7B
+python examples/vllm-smoke-test.py --model Qwen/Qwen3-1.7B
 ```
 
 如果能够完成模型加载并产生输出，说明最基础的：

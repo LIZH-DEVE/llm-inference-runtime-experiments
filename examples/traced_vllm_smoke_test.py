@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+# Scheduler.schedule() normally lives in a separate V1 EngineCore process.
+# Keep it in-process so the local monkey-patch below observes the real scheduler.
+os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
 
 from instrumentation.request_correlated_trace import JsonlRuntimeTrace
 from instrumentation.vllm_scheduler_trace import (

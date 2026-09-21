@@ -1,31 +1,33 @@
 # Async Scheduling Reproduction
 
+## Environment
+
+```text
+GPU: RTX 5060 Laptop 8 GB
+Model: Qwen2.5-3B
+Runtime: historical vLLM 0.21.0-era experiment
+```
+
 ## Initial Observation
 
-早期实验曾出现与 async scheduling 相关的明显 head-of-line blocking 信号。
+早期测量曾出现与 async scheduling 相关的明显 head-of-line blocking 信号。
 
-## Reproduction Protocol
+## Reproduction
 
 后续增加：
 
-- 更充分的 warmup；
-- 更多 measured repetitions；
+- warmup；
+- measured repetitions；
 - graceful server shutdown；
 - timing / log 完整 flush；
-- 更严格的 workload control。
+- workload control。
 
 ## Result
 
 原始信号没有稳定复现。
 
-在加强控制后的测试中，关闭 async scheduling 在当时环境下反而更快；同时 GPU forward timing 也发生变化，因此无法把原始差异稳定归因到 scheduler HOL mechanism。
+在加强控制后的测试中，关闭 async scheduling 在当时环境下反而更快；GPU forward timing 同时发生变化，因此原始差异不能稳定归因到 scheduler HOL。
 
-## Decision
+## Takeaway
 
-停止围绕原解释继续优化。
-
-## Lesson
-
-一个 systems hypothesis 即使初始 magnitude 很大，也必须经过 controlled reproduction。
-
-如果更严格实验不支持最初解释，应更新结论，而不是围绕第一次观察继续构建 optimization。
+当更严格的 reproduction 改变结果方向时，应先停止 optimization，重新确认 execution path 和 attribution。

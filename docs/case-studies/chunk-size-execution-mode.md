@@ -1,33 +1,34 @@
-# Chunk-size × Execution-mode Sensitivity
+# Chunk-size × Execution Mode
+
+## Environment
+
+```text
+GPU: RTX 5060 Laptop 8 GB
+Model: Qwen2.5-3B
+Runtime: historical vLLM 0.21.0-era experiment
+```
 
 ## Initial Observation
 
 不同 chunk-size 配置最初表现出约 **30.9%** 的性能差异。
 
-初步看来，chunk size 似乎对 runtime performance 很敏感。
-
 ## Control
 
-后续重新运行时：
+复测时固定：
 
-- 固定 model 与 workload；
-- 控制 execution mode；
-- 使用 eager 路径排除 CUDA Graph compilation / specialization 影响；
-- 重复 measured runs。
+- model / workload；
+- warmup；
+- request configuration；
+- execution mode。
+
+并使用 eager 路径单独排除 CUDA Graph compilation / specialization 的影响。
 
 ## Result
 
-原来的约 30.9% 差异收缩到约 **2.3%**。
+原来的约 30.9% 差异缩小到约 **2.3%**。
 
-## Lesson
+## Takeaway
 
-参数敏感性实验不能只固定 scheduler 参数本身。
+scheduler 参数与 GPU execution mode 不能混在同一个未控制的对比中。
 
-如果 execution mode 同时发生变化，观测到的性能差异可能主要来自：
-
-- graph capture；
-- compilation；
-- shape specialization；
-- eager / graph path 差异。
-
-因此 scheduler experiment 与 GPU execution configuration 必须一起记录。
+对 chunking、batching 或 scheduler 参数做 sensitivity test 时，需要同时记录 graph / eager execution path。

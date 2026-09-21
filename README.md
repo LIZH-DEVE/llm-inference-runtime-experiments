@@ -2,7 +2,7 @@
 
 面向 **LLM inference / serving systems** 的基础实践仓库，记录本地 GPU 环境配置、vLLM 运行验证、推理 runtime 基础概念、benchmark 方法和常见排障过程。
 
-该仓库只保留适合公开展示和复用的基础内容。更具体的研究实验、候选问题、raw data 与阶段性分析保存在独立的私有研究仓库中。
+内容围绕可复现的本地推理环境、vLLM 基础运行链路、常用 serving 指标与 benchmark 方法展开。
 
 ## 当前环境
 
@@ -119,6 +119,6 @@ python scripts/summarize_latency.py run.jsonl --field ttft_ms
 - [Benchmark 方法](docs/benchmark-methodology.md)
 - [WSL / CUDA / vLLM 排障清单](docs/troubleshooting/wsl-cuda-vllm-checklist.md)
 
-## 说明
+## 定位
 
-本仓库定位为 **LLM inference runtime 基础工程与学习记录**，公开内容以可复现环境、基础工具和 runtime 理解为主。
+本仓库记录 **LLM inference runtime 基础工程实践**，重点是环境、运行链路、测量方法和基础工具。

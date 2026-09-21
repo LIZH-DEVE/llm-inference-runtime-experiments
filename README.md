@@ -1,14 +1,8 @@
-# LLM Inference Runtime：实验与分析
+# LLM Inference Runtime：源码分析、Tracing 与性能实验
 
-围绕 **vLLM 与单机 GPU 推理运行时**，整理本地运行环境、不同模型架构、runtime 源码分析、request-level tracing，以及若干已经完成的受控实验。
+围绕 **vLLM 与单机 GPU 推理运行时**，记录本地环境、模型执行路径、scheduler / KV cache 源码分析、request-level tracing，以及若干受控性能实验。
 
-当前内容主要覆盖：
-
-- vLLM request lifecycle、scheduler、prefill / decode 与 KV cache；
-- dense、hybrid、VLM、looped Transformer 等不同执行形态；
-- CUDA Graph、JIT、execution mode 对性能测量的影响；
-- request-correlated runtime tracing；
-- warmup、重复测量与 instrumentation overhead 控制。
+仓库当前重点是把性能数字和具体 runtime state 对齐，而不是只做模型调用或参数测试。
 
 ## 实验平台
 
@@ -22,57 +16,70 @@
 | CUDA Toolkit | 13.0.3 |
 | vLLM | 0.26.0 |
 
-这套环境用于模型运行验证、runtime tracing、小规模 profiling 和机制复现。
+这套环境用于本地 inference、runtime tracing、小规模 profiling 与机制复现。
 
 ## 模型与架构
 
-### 已用于本地 runtime 实验
+### 完整本地 inference / runtime 实验
 
-| 模型 | 架构 | 主要实验内容 |
+| 模型 | 架构 | 主要用途 |
 | --- | --- | --- |
 | **Qwen3-1.7B** | Dense Transformer | BF16 inference、scheduler / KV state、runtime tracing |
 | **Qwen3.5-2B** | Hybrid | attention / recurrent state、state lifetime |
 | **Qwen3-VL-2B-Instruct** | VLM | visual encoder、multimodal execution、CUDA Graph |
-| **Qwen2.5-3B-Instruct** | Dense Transformer | serving、chunked prefill、async scheduling、测量校准 |
-| **Falcon-H1-0.5B** | Hybrid / recurrent | fast path 与 recurrent kernel 验证 |
-| **Qwen3.5-0.8B** | Hybrid | 轻量 runtime mechanism 验证 |
+| **Qwen2.5-3B-Instruct** | Dense Transformer | serving、chunked prefill、async scheduling、measurement calibration |
+
+### 执行路径 / kernel 级验证
+
+| 模型 | 架构 | 验证内容 |
+| --- | --- | --- |
+| **Falcon-H1-0.5B** | Hybrid / recurrent | fast path、recurrent kernel |
+| **Qwen3.5-0.8B** | Hybrid | lightweight runtime path |
 | **Ouro-1.4B** | Looped Transformer | repeated-layer execution、index / metadata reuse |
 
 源码阅读和架构对比还涉及 Llama-3、LLaVA、Mixtral、DeepSeek-MoE、Jamba、Mamba、Zamba、Qwen2-VL、Qwen3-Next 等模型家族。
 
 详见 [模型与架构矩阵](docs/model-matrix.md)。
 
-## Runtime 分析范围
+## vLLM Runtime Source Map
 
-当前主要跟踪以下路径：
+当前源码阅读以 vLLM 0.26.0 V1 runtime 为主。
+
+重点路径：
 
 ```text
-request arrival
-  → admission / scheduler
-  → prefill / decode
-  → KV / recurrent state
-  → model execution
-  → output / completion
+vllm/v1/core/sched/scheduler.py
+  → Scheduler.schedule()
+
+vllm/v1/core/sched/output.py
+  → SchedulerOutput
+
+vllm/v1/core/kv_cache_manager.py
+  → KV allocation / reuse
+
+vllm/v1/request.py
+  → Request state
 ```
 
-重点包括：
+分析对象包括：
 
-- request waiting / running lifecycle；
+- waiting / running request lifecycle；
+- token budget；
 - continuous batching；
 - prefill / decode interaction；
-- KV cache allocation、reuse 与 reclaim；
-- hybrid model recurrent state；
+- KV allocation / reuse / reclaim；
+- preemption；
+- hybrid recurrent state；
 - CUDA Graph / eager execution；
-- multimodal encoder path；
-- tracing 对 runtime 本身的影响。
+- multimodal encoder path。
 
-详见 [Runtime 源码分析](docs/runtime-source-reading.md)。
+详见 [vLLM Runtime Source Map](docs/runtime-source-reading.md)。
 
-## Runtime Tracing
+## Request-Correlated Tracing
 
-在本地 vLLM scheduler 路径中使用 request-correlated tracing，将调度状态与请求级结果关联起来。
+仓库包含一个针对 **vLLM V1 scheduler** 的轻量 tracing adapter。
 
-记录字段包括：
+记录：
 
 - request id；
 - scheduler iteration；
@@ -82,25 +89,83 @@ request arrival
 - preemption；
 - monotonic timestamp。
 
-仓库中保留了一个精简版本：
+核心文件：
 
-- [Tracing 设计说明](instrumentation/README.md)
-- [Request-correlated trace 示例](instrumentation/request_correlated_trace.py)
+```text
+instrumentation/
+├── request_correlated_trace.py
+└── vllm_scheduler_trace.py
+```
 
-## 代表性实验
+最小运行示例：
 
-| 实验 | 初始现象 | 控制后结果 | 主要结论 |
-| --- | --- | --- | --- |
-| **CUDA Graph / cold start** | 表面差异约 **233.7%** | steady-state 下约 **9.9%** | initialization / compilation 会显著放大首轮结果 |
-| **Chunk-size sensitivity** | 配置间差异约 **30.9%** | 控制 execution mode 后约 **2.3%** | chunk 参数实验必须同时固定 execution path |
-| **Async scheduling** | 初始出现 HOL blocking 信号 | 加强重复测量后未稳定复现 | 原始 scheduler 解释不成立 |
-| **Tracing overhead** | heavy trace 下原信号明显收缩 | 改为轻量 request-correlated trace | instrumentation 本身可能成为性能干扰项 |
+```bash
+python examples/traced_vllm_smoke_test.py \
+  --model Qwen/Qwen3-1.7B
+```
 
-详细记录见 [Case Studies](docs/case-studies/README.md)。
+离线汇总：
+
+```bash
+python scripts/analyze_trace.py results/scheduler-trace.jsonl
+```
+
+详见 [Tracing 设计说明](instrumentation/README.md)。
+
+## Controlled Benchmark
+
+`experiments/streaming_benchmark.py` 对运行中的 vLLM OpenAI-compatible server 发起 streaming requests，并记录：
+
+- TTFT；
+- TPOT；
+- end-to-end latency；
+- request throughput；
+- output-token throughput；
+- success / failure count。
+
+安装客户端依赖：
+
+```bash
+pip install -r requirements.txt
+```
+
+示例：
+
+```bash
+python experiments/streaming_benchmark.py \
+  --model Qwen/Qwen3-1.7B \
+  --warmup 2 \
+  --requests 16 \
+  --concurrency 4 \
+  --max-tokens 64
+```
+
+汇总结果：
+
+```bash
+python scripts/analyze_benchmark.py results/benchmark.jsonl
+```
+
+Benchmark 显式区分 warmup 与 measured requests，并固定 generation parameters 和 client concurrency。
+
+## Measurement Case Studies
+
+早期 runtime 实验中记录过几类典型测量问题：
+
+| Case | 初始现象 | 控制后结果 |
+| --- | --- | --- |
+| **CUDA Graph / cold start** | 表面差异约 233.7% | steady-state 约 9.9% |
+| **Chunk-size × execution mode** | 配置间差异约 30.9% | eager control 后约 2.3% |
+| **Async scheduling** | 出现 HOL blocking 信号 | 加强复现后未稳定成立 |
+| **Tracing overhead** | heavy trace 改变目标信号 | 改用轻量 request-level trace |
+
+历史案例主要来自 RTX 5060 + Qwen2.5-3B 的早期本地 vLLM 测量阶段；当前主环境已升级到 vLLM 0.26.0。
+
+详见 [Runtime Measurement Case Studies](docs/case-studies/README.md)。
 
 ## 实验方法
 
-运行时性能实验统一关注四类信息：
+性能实验按以下链路组织：
 
 ```text
 workload
@@ -113,13 +178,13 @@ workload
 
 - warmup / cold start；
 - JIT / CUDA Graph capture；
-- model、dtype 与 workload；
+- model / dtype / workload；
 - request ordering；
 - execution mode；
 - tracing overhead；
 - run-to-run variance。
 
-详见 [实验方法](docs/research-methodology.md)。
+详见 [Experiment Methodology](docs/research-methodology.md)。
 
 ## 仓库结构
 
@@ -134,10 +199,15 @@ workload
 │   ├── case-studies/
 │   └── troubleshooting/
 ├── instrumentation/
-│   ├── README.md
-│   └── request_correlated_trace.py
+│   ├── request_correlated_trace.py
+│   └── vllm_scheduler_trace.py
+├── experiments/
+│   └── streaming_benchmark.py
 ├── examples/
-│   └── vllm-smoke-test.py
+│   ├── vllm-smoke-test.py
+│   └── traced_vllm_smoke_test.py
 └── scripts/
-    └── collect_environment.py
+    ├── collect_environment.py
+    ├── analyze_trace.py
+    └── analyze_benchmark.py
 ```

@@ -1,8 +1,8 @@
-# Research Methodology
+# Experiment Methodology
 
-本仓库中的实验遵循一个简单原则：先确认现象，再解释机制。
+Runtime 性能实验首先确认现象是否稳定，再进入机制分析。
 
-## 基本流程
+## 实验流程
 
 ```text
 Observation
@@ -10,23 +10,16 @@ Observation
   → Confounder Control
   → Instrumentation
   → Attribution
-  → Keep / Revise / Kill
+  → Retain / Revise / Discard
 ```
 
 ## 1. Observation
 
-初始观察只说明“某个配置下出现差异”。
-
-它不能直接证明：
-
-- scheduler 是原因；
-- CUDA Graph 是原因；
-- KV cache 是原因；
-- 某个优化一定有效。
+初始结果只用于确认某个配置下是否存在可测差异，不直接用于判断原因。
 
 ## 2. Reproduction
 
-重复运行并固定：
+重复实验时固定：
 
 - model；
 - dtype；
@@ -37,13 +30,13 @@ Observation
 - warmup；
 - random seed（需要时）。
 
-如果信号不能稳定复现，先停止机制解释。
+只有稳定复现的现象才继续进入机制分析。
 
 ## 3. Confounder Control
 
-优先排查：
+优先检查：
 
-- cold-start；
+- cold start；
 - JIT compilation；
 - CUDA Graph capture；
 - prefix-cache hit；
@@ -55,9 +48,9 @@ Observation
 
 ## 4. Instrumentation
 
-只有 latency 数字通常无法说明机制。
+当 latency / throughput 结果不足以解释原因时，再加入 runtime tracing。
 
-Instrumentation 应尽量记录最小必要信息，例如：
+常用字段包括：
 
 - request id；
 - scheduler iteration；
@@ -66,28 +59,28 @@ Instrumentation 应尽量记录最小必要信息，例如：
 - preemption；
 - execution phase。
 
-同时需要检查 instrumentation 是否本身改变结果。
+同时对 tracing 本身的额外开销进行检查。
 
 ## 5. Attribution
 
-理想证据链：
+目标是建立：
 
 ```text
 runtime state change
-  → specific event / path change
+  → execution-path change
   → measurable performance effect
 ```
 
-如果只能看到性能相关性，应保留“correlation”表述，不直接升级为 mechanism claim。
+如果 trace 只能支持相关性，则结论保持在 correlation 层面。
 
-## 6. Kill
+## 6. Result Revision
 
-当以下情况出现时应停止原假设：
+出现以下情况时，原始解释需要修正或停止：
 
 - 更严格实验无法复现；
-- 简单 confounder 已足以解释现象；
-- instrumentation 改变信号方向；
-- magnitude 收缩到噪声级别；
-- 新结果与原机制预测冲突。
+- cold start、JIT 或 execution mode 已能解释主要差异；
+- instrumentation 明显改变目标信号；
+- 性能差异收缩到 run-to-run variance 附近；
+- 新结果与原先机制预测不一致。
 
-Negative result 不是失败记录，而是下一轮选题和实验设计的约束。
+这些结果会继续保留在 case studies 中，用于记录实验条件和后续修正。

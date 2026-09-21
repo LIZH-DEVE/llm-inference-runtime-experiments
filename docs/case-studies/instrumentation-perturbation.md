@@ -1,47 +1,38 @@
 # Instrumentation Perturbation
 
-## Problem
+## Setup
 
-为了理解 scheduler behavior，早期实验加入了 request-correlated tracing。
-
-第一版 trace 在每个 scheduler step 写入较完整的 running-request snapshot。
+为了观察 scheduler behavior，早期版本在每个 scheduler step 写入较完整的 running-request snapshot。
 
 ## Observation
 
-重 tracing 产生了大量 trace 数据，并明显改变了原来的 latency signal。
+heavy trace 产生较大的 serialization / output volume，并明显改变了目标 latency signal。
 
-在一个历史实验中，原本较明显的差异在 heavy trace 下收缩到约 **2.45%**，因此这组结果被标记为 perturbative / inconclusive。
+在对应实验中，原本较明显的差异在 heavy trace 下收缩到约 **2.45%**，因此该 run 不再用于机制归因。
 
 ## Revision
 
-随后将 instrumentation 缩减为：
+后续 tracing 缩减为：
 
-- scheduler iteration id；
+- scheduler iteration；
+- request id；
+- scheduled tokens；
 - running / waiting count；
-- short / long request count；
-- scheduled request id；
-- scheduled token count；
 - token budget；
-- preempted request id。
+- preemption。
 
-避免每一步序列化完整 request state。
+完整 request state 不再在 hot path 中序列化。
 
-## Lesson
+## Takeaway
 
-Instrumentation 不是旁观者。
+Instrumentation 本身也属于实验系统的一部分。
 
-```text
-more trace
-!=
-better evidence
-```
-
-如果 tracing 改变了被测 runtime，trace 本身就成为 confounder。
-
-因此 instrumentation 设计需要同时考虑：
+设计 tracing 时同时考虑：
 
 - information value；
 - serialization cost；
 - write frequency；
 - synchronization；
 - output volume。
+
+当前仓库中的 [request-correlated tracing](../../instrumentation/README.md) 延续了这一轻量化思路。

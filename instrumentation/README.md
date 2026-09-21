@@ -1,40 +1,47 @@
-# Runtime Instrumentation
+# Request-Correlated Runtime Tracing
 
-本目录给出一个简化的 request-correlated event trace 示例。
-
-目标不是提供完整 profiler，而是展示 runtime instrumentation 的基本设计：
-
-```text
-request_id
-+ scheduler iteration
-+ event type
-+ token / queue metadata
-+ timestamp
-```
+该目录保存一个轻量级 request-correlated trace 示例，用于把 scheduler 状态与请求级执行过程关联起来。
 
 ## Event Schema
 
-示例字段：
-
 | Field | Meaning |
 | --- | --- |
-| timestamp_ns | monotonic timestamp |
-| event | event type |
-| request_id | request identity |
-| iteration_id | scheduler step |
-| scheduled_tokens | tokens assigned in this step |
-| running_count | running requests |
-| waiting_count | waiting requests |
-| token_budget_remaining | scheduler budget |
-| preempted | whether request was preempted |
+| `timestamp_ns` | monotonic timestamp |
+| `event` | event type |
+| `request_id` | request identity |
+| `iteration_id` | scheduler iteration |
+| `scheduled_tokens` | tokens assigned in the current step |
+| `running_count` | number of running requests |
+| `waiting_count` | number of waiting requests |
+| `token_budget_remaining` | remaining scheduler token budget |
+| `preempted` | whether the request was preempted |
 
-## Design Principles
+## Trace Example
 
-- request-correlated；
+```text
+scheduler_step
+  ├── iteration_id
+  ├── running_count
+  ├── waiting_count
+  └── token_budget_remaining
+
+request_scheduled
+  ├── request_id
+  ├── iteration_id
+  ├── scheduled_tokens
+  └── preempted
+```
+
+## Implementation Notes
+
+实现采用：
+
+- `time.perf_counter_ns()` 作为单调时钟；
 - append-only JSONL；
-- monotonic clock；
-- 低字段数量；
-- 支持 batch flush；
-- 不在 hot path 做复杂分析。
+- buffered flush；
+- 固定、紧凑的字段集合；
+- hot path 中不执行复杂分析。
 
-实际研究 instrumentation 还会根据问题增加特定 event，但应先证明新增 trace 不会显著扰动目标 signal。
+实际分析在 trace 写出后离线完成，减少 tracing 对 scheduler path 的额外干扰。
+
+示例代码见 [request_correlated_trace.py](request_correlated_trace.py)。
